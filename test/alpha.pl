@@ -8,24 +8,25 @@ use OpenCA::CRL;
 use OpenCA::REQ;
 use OpenCA::DB;
 
-my $shell = ( $ENV{OPENSSL} or "/usr/bin/openssl" );
+my $shell = ( `type -path openssl` or $ENV{OPENSSL} or "/usr/bin/openssl" );
 my $cnf   = ( $ENV{OPENSSL_CONFIG} or "/usr/ssl/openssl.cnf");
 my $data  = "data";
 
-print "\nInitializing Crypto Backend and dB object ... ";
+print "\nInitializing Crypto Backend ($shell) and dB object ... ";
 
 my $openssl = new OpenCA::OpenSSL( SHELL=>$shell, CONFIG=>$cnf);
 my $db = new OpenCA::DB( SHELL=>$openssl, DB_DIR=>"db" );
 
 if( not $db or not $openssl ) {
 	print "Error 1\n";
+	print "(DB = $db ; OPENSSL = $openssl )";
 	exit;
 } else {
 	print "Ok.\n";
 }
 
 print "Initializing DB ... ";
-	$db->initDB();
+	$db->initDB( FORCE=>1);
 print "Ok.\n";
 
 my $r = new OpenCA::REQ( SHELL=>$openssl, FORMAT=>"SPKAC",
@@ -86,16 +87,21 @@ if( $ser = $db->storeItem( OBJECT=>$c, DATATYPE => VALID_CERTIFICATE,
 	print "ERROR: Storing VALID_CERTIFICATE (4) Object.\n";
 }
 
+print "::: PIPPO";
 my $crl = new OpenCA::CRL( SHELL=>$openssl, FORMAT=>PEM, 
 						INFILE=>"$data/crl.pem" );
+print "::: PIPPO";
 if ( not $crl ) { die "ERROR: Creating CRL.\n" };
 
+print "::: PIPPO";
 my $r = new OpenCA::REQ( SHELL=>$openssl, FORMAT=>"SPKAC",
 					INFILE=>"$data/spkac3.req" );
+print "::: PIPPO";
 if ( not $r ) {
 	die "Error (REQ)!\n";
 }
 
+print "::: PIPPO";
 print "Adding Deleted Request (5) .... ";
 if( $ser = $db->storeItem( OBJECT=>$r, DATATYPE => DELETED_REQUEST,
 			INFORM=>SPKAC )) {
@@ -132,3 +138,5 @@ if ( not $item = $db->getItem( DATATYPE=>CRL, KEY=>1 )) {
 }
 
 print "Done.\n\n";
+
+exit 0;

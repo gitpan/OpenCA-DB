@@ -70,7 +70,7 @@ use OpenCA::OpenSSL;
 use OpenCA::Tools;
 use AnyDBM_File;
 
-$OpenCA::DB::VERSION = '1.0';
+$OpenCA::DB::VERSION = '1.02';
 
 my %params = {
  dbDir => undef,
@@ -611,7 +611,7 @@ sub storeItem {
 
 	my ( @exts, @attributes );
 	my ( $converted, $baseType, $fileName, $headFileName, $hashFileName,
-	     $attr, $header, $dbKey );
+	     $attr, $header, $dbKey, $digest );
 
 	## Shall we give the ability to choose directly the
 	## key ??? This is actually left out to provide a
@@ -666,11 +666,27 @@ sub storeItem {
 	$fileName = "$self->{dbDir}/$self->{dBs}->{$baseType}->{FILE}";
 	$headFileName = "$self->{dbDir}/$self->{dBs}->{$baseType}->{INFO}";
 
-	my $digest= $self->{backend}->getDigest( DATA=> $converted . $$ );
+	if( $dataType =~ /CERTIFICATE/ ) {
+		$digest= $object->getParsed()->{HASH};
+	} else {
+		$digest= $self->{backend}->getDigest( DATA=> $converted . $$ );
+	}
 	if( $mode eq "UPDATE" ) {
 		## print ":::: DELETING OLD ITEM => $serial<BR>\n";
 		return if ( not $self->deleteItem( DATATYPE=>$dataType,
 							KEY=>$serial ));
+	}
+
+	## If we are adding a duplicate of the certificate we should
+	## at least delete the old value or update it's contents. The
+	## safest way is to delete the old one and then write in a new
+	## one...
+	if( ($dataType =~ /CERTIFICATE/) and ($mode ne "UPDATE" ) and
+			($self->getData( FILENAME=>$fileName, KEY=>$digest) )) {
+		## Data Already exists in database, this should not happen
+		## if datatype is CERTIFICATE, we assume it is an error, here
+		## (if not an update... )
+		return (-1);
 	}
 
 	## We add the record and update the IDX one calling the addRecord()
@@ -750,24 +766,24 @@ sub storeItem {
 	return $serial;
 }
 
-sub exists {
-	## Returns True (dbKey) if the key exists in dB, else
-	## it will return NULL False (null);
-
-	my $self = shift;
-	my $keys = { @_ };
-
-	my ( $ret, $hash, $fileName, $item, $hash );
-
-	my $type   	= $keys->{DATATYPE};
-	my $baseType	= $self->getBaseType( DATATYPE=>$type );
-	my $dbKey    	= $keys->{KEY};
-
-	$dbKey = hex ( $dbKey ) if( $self->isCertDataType( DATATYPE=>$type ));
-	$ret   = $self->existDB( DATATYPE=> $type, KEY=>$dbKey );
-
-	return $dbKey;
-}
+## sub exists {
+## 	## Returns True (dbKey) if the key exists in dB, else
+## 	## it will return NULL False (null);
+## 
+## 	my $self = shift;
+## 	my $keys = { @_ };
+## 
+## 	my ( $ret, $hash, $fileName, $item, $hash );
+## 
+## 	my $type   	= $keys->{DATATYPE};
+## 	my $baseType	= $self->getBaseType( DATATYPE=>$type );
+## 	my $dbKey    	= $keys->{KEY};
+## 
+## 	$dbKey = hex ( $dbKey ) if( $self->isCertDataType( DATATYPE=>$type ));
+## 	$ret   = $self->existDB( DATATYPE=> $type, KEY=>$dbKey );
+## 
+## 	return $dbKey;
+## }
 
 sub existsDB {
 	## Returns True (dbKey) if the key exists in dB, else
@@ -795,7 +811,6 @@ sub existsDB {
 		return;
 	}
 }
-
 
 sub getItem {
 

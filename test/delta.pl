@@ -31,13 +31,13 @@ print "ELEMENTS: " . $db->elements( DATATYPE=>PENDING_REQUEST ) . "\n";
 ## print $db->deleteItem( DATATYPE=>PENDING_REQUEST, KEY=>1 );
 ## print "ELEMENTS: " . $db->elements( DATATYPE=>PENDING_REQUEST ) . "\n";
 
-@list = $db->searchItem( DATATYPE=>PENDING_REQUEST,
+@list = $db->searchItems( DATATYPE=>PENDING_REQUEST,
 					EMAIL=>"madwolf\@openca.org" );
 for $i ( @list ) {
 	print "Object Found: " . $i->getParsed()->{OPERATOR} . "\n";
 }
 
-@list = $db->searchItem( DATATYPE=>PENDING_REQUEST, RA=>"Anagrafe 1" );
+@list = $db->searchItems( DATATYPE=>PENDING_REQUEST, RA=>"Anagrafe 1" );
 for $i ( @list ) {
 	print "Object Found: " . $i->getParsed()->{DN} . "\n";
 }
