@@ -49,14 +49,41 @@
 ## copied and put under another distribution licence
 ## [including the GNU Public Licence.]
 
+## the module's errorcode is 21
+##
+## function
+##
+## new			11
+## initDB		21
+## getSubTypes		31
+## dbOpen		41
+## dbClose		42
+## storeItem		51
+## parseDataType	32
+## getSearchAttributes	33
+## getItem		61
+## getNextItem		62
+## getPrevItem		63
+## deleteItem		52
+## updateStatus		53
+## elements		64
+## rows			65
+## searchItems		66
+## listItems		67
+## createObject		43
+## getSignature		71
+## getBody		72
+## getHeader		73
+## compareNumeric	81
+## compareHexSerial	82
+## compareString	84
+## toHex		83
+
 use strict;
 
 package OpenCA::DB;
 
-## This should provide with fallback from BrekeleyDB->GDBM->NDBM
-## Also should fix some Solaris Related problems... please report
-## if you find this causing problems.
-BEGIN { @AnyDBM_File::ISA = qw( DB_File GDBM_File NDBM_File ) }
+our ($errno, $errval);
 
 ## We must store/retrieve CRLs,CERTs,REQs objects:
 ## proper instances of object management classes are
@@ -65,25 +92,57 @@ BEGIN { @AnyDBM_File::ISA = qw( DB_File GDBM_File NDBM_File ) }
 use OpenCA::REQ;
 use OpenCA::X509;
 use OpenCA::CRL;
-use OpenCA::CRR;
 use OpenCA::OpenSSL;
 use OpenCA::Tools;
-use AnyDBM_File;
 
-$OpenCA::DB::VERSION = '1.02';
+## Mandatory use of BerkeleyDB
+use DB_File;
 
-my %params = {
- dbDir => undef,
- backend => undef,
- dBs => undef,
- defStoredFormat => undef,
- defOutFormat => undef,
- tools => undef,
- beginHeader => undef,
- endHeader => undef,
- idxDataType => undef,
- idxData =>undef,
-};
+$OpenCA::DB::VERSION = '2.0.5';
+
+my %params = (
+  dbDir           => undef,
+  backend         => undef,
+  dBs             => undef,
+  defStoredFormat => undef,
+  defInFormat     => undef,
+  defOutFormat    => undef,
+  tools           => undef,
+  dbms            => undef,
+  dbms_h          => undef,
+  dbms_search     => undef,
+  dbms_search_h   => undef,
+  errno           => undef,
+  errval          => undef
+);
+
+sub setError {
+	my $self = shift;
+
+	if (scalar (@_) == 4) {
+		my $keys = { @_ };
+		$errval = $keys->{ERRVAL};
+		$errno  = $keys->{ERRNO};
+	} else {
+		$errno  = $_[0];
+		$errval = $_[1];
+	}
+
+	## save the last DB-error
+	$OpenCA::DB::errno  = $errno;
+	$OpenCA::DB::errval = $errval;
+
+	## support for: return $self->setError (1234, "Something fails.") if (not $xyz);
+	return undef;
+}
+
+sub errno {
+	return $OpenCA::DB::errno;
+}
+
+sub errval {
+	return $OpenCA::DB::errval;
+}
 
 sub new {
         my $that = shift;
@@ -97,496 +156,183 @@ sub new {
 
         my $keys = { @_ };
 
-	$self->{beginSignature} = "-----BEGIN PKCS7-----";
-        $self->{endSignature}   = "-----END PKCS7-----";
-
         $self->{backend}   = $keys->{SHELL};
         $self->{dbDir}     = $keys->{DB_DIR};
 
-        return if ((not $self->{backend}) or (not $self->{dbDir}));
+        return $self->setError (2111011, "OpenCA::DB->new: No crypto-backend present.")
+		if (not $self->{backend});
+        return $self->setError (2111012, "OpenCA::DB->new: No databasedirectory present.")
+        	if (not $self->{dbDir});
 
-	$self->{dBs}->{CERTIFICATE}->{FILE}	= "certificates";
-	$self->{dBs}->{CERTIFICATE}->{INFO}	= "certificates_info";
-	$self->{dBs}->{VALID_CERTIFICATE}	= "valid_certs";
-	$self->{dBs}->{REVOKED_CERTIFICATE}	= "revoked_certs";
-	$self->{dBs}->{SUSPENDED_CERTIFICATE}	= "suspended_certs";
-	$self->{dBs}->{EXPIRED_CERTIFICATE}	= "expired_certs";
+	$self->{dBs}->{CERTIFICATE}		= "certificates";
+	$self->{dBs}->{SEARCH}->{CERTIFICATE}	= "search_certs";
 
-	$self->{dBs}->{REQUEST}->{FILE}		= "requests";
-	$self->{dBs}->{REQUEST}->{INFO}		= "requests_info";
-	$self->{dBs}->{PENDING_REQUEST}		= "pending_requests";
-	$self->{dBs}->{DELETED_REQUEST}		= "deleted_requests";
-	$self->{dBs}->{APPROVED_REQUEST}	= "approved_requests";
-	$self->{dBs}->{ARCHIVIED_REQUEST}	= "archivied_requests";
-	$self->{dBs}->{REVOKE_REQUEST}		= "revoke_requests";
-	$self->{dBs}->{RENEW_REQUEST}		= "renew_requests";
+	$self->{dBs}->{CA_CERTIFICATE}		= "cacertificates";
+	$self->{dBs}->{SEARCH}->{CA_CERTIFICATE}= "search_cacerts";
 
-        $self->{dBs}->{PENDING_CRR}             = "pending_crr";
-        $self->{dBs}->{APPROVED_CRR}            = "approved_crr";
-        $self->{dBs}->{ARCHIVIED_CRR}           = "archivied_crr";
-        $self->{dBs}->{DELETED_CRR}             = "deleted_crr";
+	$self->{dBs}->{REQUEST}			= "requests";
+	$self->{dBs}->{SEARCH}->{REQUEST}  	= "search_requests";
 
-	$self->{dBs}->{CRL}->{FILE}		= "crl";
-	$self->{dBs}->{CRL}->{INFO}		= "crl_info";
-	$self->{dBs}->{VALID_CRL}		= "valid_crl";
-	$self->{dBs}->{EXPIRED_CRL}		= "expired_crl";
+	$self->{dBs}->{CRR}			= "crrs";
+	$self->{dBs}->{SEARCH}->{CRR}  		= "search_crrs";
 
-	$self->{dBs}->{CA_CERTIFICATE}->{FILE}	= "ca_certificates";
-	$self->{dBs}->{CA_CERTIFICATE}->{INFO}	= "ca_certificates_info";
-	$self->{dBs}->{VALID_CA_CERTIFICATE} 	= "valid_ca_certificates";
-	$self->{dBs}->{EXPIRED_CA_CERTIFICATE} 	= "expired_ca_certificates";
-
-	$self->{dBs}->{SEARCH}->{PENDING_REQUEST}  = "pending_requests_search";
-	$self->{dBs}->{SEARCH}->{APPROVED_REQUEST} = "approved_requests_search";
-	$self->{dBs}->{SEARCH}->{DELETED_REQUEST}  = "deleted_requests_search";
-	$self->{dBs}->{SEARCH}->{ARCHIVIED_REQUEST}= "archivied_requests_search";
-	$self->{dBs}->{SEARCH}->{PENDING_CRR}   = "pending_crr_search";
-	$self->{dBs}->{SEARCH}->{APPROVED_CRR}  = "approved_crr_search";
-	$self->{dBs}->{SEARCH}->{ARCHIVIED_CRR} = "archivied_crr_search";
-	$self->{dBs}->{SEARCH}->{DELETED_CRR}   = "deleted_crr_search";
-
-	$self->{dBs}->{SEARCH}->{VALID_CERTIFICATE}     ="valid_certs_search";
-	$self->{dBs}->{SEARCH}->{EXPIRED_CERTIFICATE}   ="expired_certs_search";
-	$self->{dBs}->{SEARCH}->{REVOKED_CERTIFICATE}   ="revoked_certs_search";
-	$self->{dBs}->{SEARCH}->{SUSPENDED_CERTIFICATE} ="susp_certs_search";
+	$self->{dBs}->{CRL}			= "crls";
+	$self->{dBs}->{SEARCH}->{CRL}		= "search_crls";
 
 	## Defaults storage format. This does not apply to SPKAC requests
 	$self->{defStoredFormat} 		= "PEM";
 	$self->{defOutFormat}    		= "PEM";
+	$self->{defInFormat}    		= "PEM";
  	$self->{beginHeader} 			= "-----BEGIN HEADER-----";
  	$self->{endHeader} 			= "-----END HEADER-----";
 
-	return if ( not $self->{tools} = new OpenCA::Tools());
+	return $self->setError (2111021, "OpenCA::DB->new: Cannot initialize OpenCA::Tools.")
+		if ( not $self->{tools} = new OpenCA::Tools());
 
 	if( not ( opendir( DIR, $self->{dbDir} ))) {
-		return;
+		return $self->setError (2111031, "OpenCA::DB->new: Cannot open databasedirectory.");
 	} else {
 		closedir(DIR);
 	};
 
+	return $self->setError (2111041, "OpenCA::DB->new: Cannot initialize database ($errno)\n$errval")
+		if (not $self->initDB(MODE=>$keys->{MODE}));
+
 	return $self;
-}
-
-sub deleteData {
-	my $self = shift;
-	my $keys = { @_ };
-
-	my $fileName = $keys->{FILENAME};
-	my $key      = $keys->{KEY};
-
-	my %DB;
-
-	return if ( (not $key) or (not $fileName) );
-	dbmopen( %DB, $fileName, 0600 ) or return;
-		delete $DB{$key};
-	dbmclose( %DB );
-
-	return 1;
-}
-
-sub saveData {
-	my $self = shift;
-	my $keys = { @_ };
-
-	my $fileName = $keys->{FILENAME};
-	my $data     = $keys->{DATA};
-	my $key      = $keys->{KEY};
-
-	my %DB;
-
-	return if ( not $key );
-	dbmopen( %DB, $fileName, 0600 ) or return;
-		$DB{$key}=$data;
-	dbmclose( %DB );
-
-	return 1;
-}
-
-sub getData {
-	my $self = shift;
-	my $keys = { @_ };
-
-	my $fileName = $keys->{FILENAME};
-	my $key      = $keys->{KEY};
-
-	my %DB;
-	my $ret;
-
-	dbmopen( %DB, $fileName, 0400 ) or return;
-		$ret=$DB{$key};
-	dbmclose( %DB );
-
-	return $ret;
-}
-
-sub getIndex {
-	my $self  = shift;
-
-	return $self->getHash( KEY=>"IDX", @_ );
-}
-
-sub getHash {
-	my $self  = shift;
-	my $keys = { @_ };
-
-	my $fileName 	= $keys->{FILENAME};
-	my $key		= $keys->{KEY};
-
-	my ( $ret, $rec );
-	
-	$rec = $self->getData( FILENAME=>$fileName, KEY=>$key );
-	$ret = $self->txt2hash( TXT=>$rec );
-
-	return $ret;
-}
-
-sub saveIndex {
-	my $self = shift;
-
-	return $self->saveHash( KEY=>"IDX", @_ );
-}
-
-sub saveHash {
-	my $self  = shift;
-	my $keys = { @_ };
-
-	my $fileName	 = $keys->{FILENAME};
-	my $hash	 = $keys->{IDX};
-	my $key 	 = $keys->{KEY};
-
-	my $data =  $self->hash2txt( HASH=>$hash );
-
-	return $self->saveData(FILENAME=>$fileName, KEY=>$key, DATA=>$data);
-}
-
-sub hash2txt {
-	my $self  = shift;
-
-	my $keys = { @_ };
-
-	my $hash	= $keys->{HASH};
-
-	my $record = "";
-	my ( $i, $key, $val );
-
-	while( ($key, $val ) = each %$hash ) {
-		$record .= "$key=$val\n";
-	}
-	$record =~ s/(\n)$//;
-
-	return $record;
-}
-
-sub txt2hash {
-	my $self = shift;
-	my $keys = { @_ };
-
-	my $record 	= $keys->{TXT};
-
-	my ( $ret, $key, $val, $line );
-
-	foreach $line ( split ( /\n/, $record ) ) {
-		$line =~ s/\s*=\s*/=/g;
-		( $key, $val ) = ( $line =~ /(.*)\s*=\s*(.*)\s*/ );
-		$ret->{$key} = $val;
-	}
-	return $ret;
-}
-
-sub deleteRecord {
-	my $self = shift;
-	my $keys = { @_ };
-
-	my $fileName	= $keys->{FILENAME};
-	my $dataType	= $keys->{DATATYPE};
-	my $dbKey	= $keys->{KEY};
-	my $mode	= $keys->{MODE};
-
-	my ( $idx, $tmp );
-
-	return if ( (not $dbKey) or ( not $fileName ) );
-
-	if( $mode ne "RAW" ) {
-		$idx = $self->getIndex( FILENAME=>$fileName );
-		return if ( not $idx );
-	}
-
-	return if (not $self->deleteData( @_ ));
-
-	$idx->{ELEMENTS}-- if ( $idx->{ELEMENTS} > 0 );
-	$idx->{FIRST} = "0" if( not $idx->{FIRST} );
-
-	if( $dbKey =~ /[a-zA-Z]+/ ) {
-		$mode = "RAW";
-		$idx->{LAST} = $idx->{ELEMENTS};
-	}
-
-	if( $mode ne "RAW" ) {
-		if( $idx->{FIRST} == $dbKey ) {
-			$tmp = ( $self->getNextItemKey( DATATYPE=>$dataType,
-							KEY=>$dbKey ) or 0 );
-			$idx->{FIRST} =  $tmp;
-		}
-
-		if( $dbKey == $idx->{LAST} ) {
-			$tmp = ( $self->getPrevItemKey( DATATYPE=>$dataType,
-							KEY=>$dbKey ) or 0 );
-			$idx->{LAST} = $tmp
-		}
-	}
-
-	$idx->{DELETED}++;
-	$idx->{LAST_UPDATED} =  $self->{tools}->getDate();
-
-	return if ( not $self->saveIndex( IDX=>$idx, FILENAME=>$fileName ));
-
-	return 1;
-}
-
-
-sub addRecord {
-
-	## In the dbKey we find nothing if we are going to add
-	## a new record and the digest if we are going to update
-	## an old one.
-	my $self = shift;
-	my $keys = { @_ };
-
-	my $fileName 	= $keys->{FILENAME};
-	my $dbKey 	= $keys->{KEY};
-	my $dbVal 	= $keys->{DATA};
-	my $mode 	= $keys->{MODE};
-	
-	my ( $idx, $isCert);
-
-	## print ":::: ADD MODE => $mode<BR>\n";
-	## print ":::: FILENAME => $fileName<BR>\n";
-	## print ":::: DBVAL => " . length ($dbVal ) . "<BR>\n";
-	## print ":::: DBKEY => $dbKey<BR>\n";
-
-	return if ( (not $dbVal) or  ( not $fileName ) or 
-			(not $idx = $self->getIndex( FILENAME=>$fileName)) );
-
-	if ( $mode eq "UPDATE" ) {
-		return if not $dbKey;
-
-		return if ( not $self->saveData( KEY=>$dbKey, MODE=>$mode,
-					FILENAME=>$fileName, DATA=>$dbVal));
-
-		## print ":::: RECORD UPDATED => $dbKey<BR>\n";
-		return $dbKey;
-	}
-
-	if ( not $dbKey ) {
-		return if( $self->getData(FILENAME=>$fileName, KEY=>$dbKey));
-		$dbKey = $idx->{NEXT};
-
-		$idx->{LAST} = $dbKey;
-		$idx->{NEXT}++;
-
-		push ( @_ , KEY=>$dbKey );
-	} else {
-		if ( $idx->{LAST} < $dbKey ) {
-			$idx->{LAST} = $dbKey;
-			$idx->{NEXT} = $dbKey + 1;
-		}
-	}
-
-	return if ( not $self->saveData( KEY=>$dbKey, MODE=>$mode,
-				FILENAME=>$fileName, DATA=>$dbVal ));
-
-	$idx->{ELEMENTS}++;
-	$idx->{LAST_UPDATED} =  $self->{tools}->getDate();
-	$idx->{FIRST} = $dbKey if( ($dbKey < $idx->{FIRST}) or 
-						( $idx->{FIRST} == 0) );
-	
-	return if ( not $self->saveIndex( IDX=>$idx, FILENAME=>$fileName ));
-
-	## print ":::: RECORD SUCCESSFULLY ADDED!<BR>\n";
-	return $dbKey;
-}
-
-sub updateRecord {
-	my $self = shift;
-
-	return $self->addRecord( MODE=>"UPDATE", @_ );
-
 }
 
 sub initDB {
 	## Generate a new db File and initialize it allowing the
 	## DB to keep track of the DB status
 
-	## There is a special record keeping additional useful
-	## Informations about DB, this is the IDX
-
 	my $self = shift;
 	my $keys = { @_ };
 
-	my $mode     = $keys->{MODE};
-	my @fileList = ();
+	## Mode, now ignored, actually
+	my $mode      = $keys->{MODE};
+	my @dataTypes = ( "CA_CERTIFICATE", "CERTIFICATE", "CRR",
+			  "REQUEST", "CRL" );
 
-	my ( $key, $pkey );
+	## Class parameters
+	my $dbDir     = $self->{dbDir};
 
-	for $key ( keys %{$self->{dBs}} ) {
-		if( $self->{dBs}->{$key} =~ /HASH/ ) {
-			for $pkey ( keys %{$self->{dBs}->{$key}} ) {
-				push ( @fileList, 
-					$self->{dBs}->{$key}->{$pkey});
-			}
-		} else {
-			push ( @fileList, $self->{dBs}->{$key});
-		}
-	}
+	## Private parameters
+	my ( $type, $baseType, $filename, $flags, @subTypes );
 
-	if( $mode eq "FORCE" ) {
-		return $self->createDB( $mode, @fileList );
-	} else {
-		return 1;
-	}
-}
+	foreach $type (@dataTypes) {
+		@subTypes = $self->getSubTypes( $type );
 
-sub createDB {
-	my $self = shift;
-	my $mode = shift;
+		## For each subtype (PENDING, etc...) we go to the
+		foreach (@subTypes) {
+			my $ret;
 
-	my @fileList = @_;
-
-	my ( $index, $val, $key, %DB, $date, $fileName, $i );
-	my $dbDir = $self->{dbDir};
-
-	if ( not $self->{tools} ) {
-		$self->{tools} = new OpenCA::Tools();
-	}
-	$date = $self->{tools}->getDate();
-
-	foreach $val ( @fileList ) {
-		$fileName = "$dbDir/$val";
-
-		## Now we build the IDX object (that keeps track of the
-		## db status)
-		$index = {
-			DELETED=> "0",
-			ELEMENTS=> "0",
-			NEXT=> "1",
-			FIRST=> "0",
-			LAST=> "0",
-			STATUS=> "UPDATED",
-			LAST_UPDATED=> $date,
-			FILENAME=> $fileName };
-
-		if( -e (glob "$fileName.*" )[0] ) {
-			if( $mode eq "FORCE" ) {
-				my @tmpNameList = glob "$fileName*.old";
-
-				foreach $i ( @tmpNameList ) {
-					unlink( "$i");
-				}
-
-				@tmpNameList = glob "$fileName.*";
-				foreach $i ( @tmpNameList ) {
-					$self->{tools}->moveFiles( SRC=>$i,
-						   DEST=>"$i.old" );
-				}
-				## Let's save the new DB status to file
-				$self->saveIndex( FILENAME=>$fileName,
-								IDX=>$index );
-			}
-		} else {
-			## Let's save the new DB status to file
-			$self->saveIndex( FILENAME=>$fileName, IDX=>$index );
+			if( not $self->dbOpen( DATATYPE => "$_\_$type", 
+				FILENAME=>$filename, MODE=>$mode )) {
+				return $self->setError (2121021,
+							"OpenCA::DB->initDB: Cannot open database ".
+							"with datatype ".$_."_".$type.", ".
+							"filename $filename and ".
+							"accessmode $mode ($errno)\n$errval.");
+			};
+			$self->dbClose( $self->{dbms} );
 		}
 	}
 
 	return 1;
 }
 
-sub getReferences {
+sub getSubTypes {
 	my $self = shift;
-	my $keys = { @_ };
+	my $type = shift;
 
-	my $key 	= $keys->{KEY};
-	my $fileName 	= $keys->{FILENAME};
+	my ( @subTypes );
 
-	my ( %DB, $dbVal );
-	my @ret = ();
-
-	return if not ( $key or $fileName );
-	dbmopen( %DB, "$fileName", 0400 ) or return ;
-		$dbVal=$DB{$key};
-	dbmclose( %DB );
-
-	return if ( not $dbVal );
-	@ret = split( /:/, $dbVal );
-
-	return @ret;
-}
-
-sub getBaseType {
-	my $self = shift;
-
-	my $keys = { @_ };
-	my $dataType = $keys->{DATATYPE};
-
-	my $ret;
-
-	     if ( $dataType =~ /CA_CERTIFICATE/ ) {
-		$ret = "CA_CERTIFICATE";
-	} elsif ( $dataType =~ /CERTIFICATE/ ) {
-		$ret = "CERTIFICATE";
-	} elsif ( $dataType =~ /CRL/ ) {
-		$ret = "CRL";
-	} elsif ( $dataType =~ /REQUEST/ ) {
-		$ret = "REQUEST";
-        } elsif ( $dataType =~ /CRR/ ) {
-                $ret = "CRR";
-	} else {
-		## Unsupported DATATYPE
-		return;
+	if( $type =~ /CERTIFICATE/ ) {
+		@subTypes = ("VALID","REVOKED","SUSPENDED","EXPIRED" );
+	} elsif ( $type =~ /REQUEST|CRR/ ) {
+		@subTypes =("ARCHIVED","NEW","RENEW","PENDING","SIGNED","APPROVED","DELETED");
+	} elsif ( $type =~ /CRL/ ) {
+		@subTypes = ("VALID","EXPIRED","DELETED");
 	}
 
-	return $ret;
+	return ( @subTypes );
 }
 
-sub getSearchAttributes {
+sub dbOpen {
+	## Open the DB, the one requested using the DATATYPE, STATUS
+	## couple:
+	##	DATATYPE :: CERTIFICATE, REQUEST, CRR, CRL
+	##	STATUS   :: PENDING, APPROVED, DELETED, VALID,
+	##		    REVOKED, EXPIRED, SUSPENDED
+	##	            NEW, RENEW, SIGNED
 	my $self = shift;
 	my $keys = { @_ };
 
-	my $dataType     = $keys->{DATATYPE};
-	my @ret = ();
-	my $baseType;
+	my $dataType = $keys->{DATATYPE};
+	my $mode     = $keys->{MODE};
 
-	return if ( not $dataType );
+	my ( $db, $dbSearch, $filename, $baseType, $status, $flags );
+	my ( %h, %h1, $binfo, $b2_info );
 
-	$baseType = $self->getBaseType( DATATYPE => $keys->{DATATYPE} );
+	( $baseType, $status ) = $self->parseDataType( $dataType );
 
-	if ( $baseType =~ /REQUEST/ ) {
-		if( $dataType =~ /PENDING/ ) {
-			@ret = ( "DN", "CN", "EMAIL", "RA" );
-		} elsif ( $dataType =~ /APPROVED/ ) {
-			@ret = ( "DN", "CN", "EMAIL", "OPERATOR" );
-		} elsif ( $dataType =~ /REVOKE/ ) {
-			@ret = ( "DN", "CN", "EMAIL", "REVOKE" );
-		} else {
-			@ret = ( "DN", "CN", "EMAIL" );
-		}
-        } elsif ( $baseType =~ /CRR/ ) {
-		if( $dataType =~ /PENDING/ ) {
-			@ret = ( "CERTIFICATE_SERIAL", "DN", "CN", "EMAIL",
-				 "RA" );
-		} elsif ( $dataType =~ /APPROVED/ ) {
-			@ret = ( "CERTIFICATE_SERIAL", "DN", "CN", "EMAIL",
-				 "OPERATOR", "RA" );
-		} else {
-			@ret = ( "CERTIFICATE_SERIAL", "DN", "CN", "EMAIL" );
-		}
-	} elsif ( $baseType =~ /CA_CERTIFICATE/ ) {
-		@ret = ( "DN", "O", "CN", "EMAIL" );
-	} elsif ( $baseType =~ /CERTIFICATE/ ) {
-		@ret = ( "SERIAL", "DN", "CN", "EMAIL" );
-	};
+	$status = $keys->{STATUS} if( not $status);
 
-	return @ret;
+	$filename = $self->{dbDir} . "\/" .  lc( $status ) . "\_" .
+				$self->{dBs}->{$baseType};
+
+	return $self->setError (2141011, "OpenCA::DB->dbOpen: No filename specified.")
+		if (not $filename);
+	return $self->setError (2141012, "OpenCA::DB->dbOpen: No datatype specified.")
+		if (not $dataType);
+	return $self->setError (2141013, "OpenCA::DB->dbOpen: No status specified.")
+		if (not $status);
+
+	## Delete the file if "FORCE" mode is used and re-create it
+	unlink( "$filename" ) if( defined $mode and $mode eq "FORCE" );
+
+	$b2_info = new DB_File::BTREEINFO;
+	if( $baseType =~ /^(CA_CERTIFICATE|CRL)/ ) {
+		$b2_info->{'compare'} = \&compareString;
+	} else {
+		$b2_info->{'compare'} = \&compareNumeric;
+	}
+
+	$self->{dbms} = tie %h, "DB_File", "$filename", O_RDWR|O_CREAT, 
+						0600, $b2_info
+		or return $self->setError (2141021, "OpenCA::DB->dbOpen: Cannot initialize DBMS.");
+
+	$filename = $self->{dbDir} . "\/" . lc( $status ) . "\_" .
+	 			 $self->{dBs}->{SEARCH}->{$baseType};
+
+	## Delete the file if "FORCE" mode is used and re-create it
+	unlink( "$filename" ) if( defined $mode and $mode eq "FORCE" );
+
+	$binfo = new DB_File::BTREEINFO;
+	$binfo->{'flags'} = R_DUP;
+	$self->{dbms_search} = tie %h1, "DB_File", "$filename",
+					O_RDWR|O_CREAT, 0600, $binfo
+		or return $self->setError (2141023, "OpenCA::DB->dbOpen: Cannot initialize searchengine.");
+
+	$self->{dbms_h}		= \%h;
+	$self->{dbms_search_h} 	= \%h1;
+
+	return 1;
+}
+
+sub dbClose {
+	## Closes an open DB file
+
+	my $self = shift;
+	my $db = shift;
+	
+	undef $self->{dbms} if( defined $self->{dbms} );
+	untie $self->{dbms_h};
+
+	undef $self->{dbms_search} if( defined $self->{dbms_search} );
+	untie $self->{dbms_search_h};
+
+	return 1;
 }
 
 sub storeItem {
@@ -602,214 +348,149 @@ sub storeItem {
 	my $keys = { @_ };
 
 	my $dataType 	= $keys->{DATATYPE};	
-	my $inform	= ( $keys->{INFORM} or "PEM" );
+	my $inform	= ( $keys->{INFORM} or $self->{defInFormat} );
 
 	my $object	= $keys->{OBJECT};	## an OpenCA::xxxx object
 	my $mode	= $keys->{MODE};	## ACTUALLY only UPDATE|NULL
 
-	my %DB;
+	my ( $cursor, $item, $converted, $key, $value, $tmp);
 
-	my ( @exts, @attributes );
-	my ( $converted, $baseType, $fileName, $headFileName, $hashFileName,
-	     $attr, $header, $dbKey, $digest );
+	return $self->setError (2151011, "OpenCA::DB->storeItem: No datatype specified.")
+		if (not $dataType);
+	return $self->setError (2151012, "OpenCA::DB->storeItem: No object specified.")
+		if (not $object);
 
-	## Shall we give the ability to choose directly the
-	## key ??? This is actually left out to provide a
-	## very independent interface class... (huh?)
-	my $serial	= $keys->{KEY};
+	my $parsed	= $object->getParsed();
+	my ( $baseType, $status ) = $self->parseDataType( $dataType );
 
-	return if ( ($mode eq "UPDATE" ) and (not $serial));
+	$item = $object->getItem ();
+	$key  = $object->getSerial ($baseType); # CAs use digest and not cert's serial
 
-	## dbKey will differ from serial only for certificates because
-	## we store them by DECIMALs and not by HEX values.
-	if( $self->isCertDataType( DATATYPE=>$dataType )) {
-		## If a certificate is given then the key is
-		## the DECIMAL value of the Cert's serial
-		$dbKey = hex($object->getParsed()->{SERIAL});
-	} else {
-		$dbKey = $serial;
+	## determine old status
+	my @status_list = ("NEW", "RENEW", "PENDING", "SIGNED", "APPROVED", "ARCHIVED", "DELETED",
+                           "VALID", "EXPIRED", "SUSPENDED", "REVOKED");
+        my $old_status = "";
+	foreach my $scan_status (@status_list)
+	{
+		## is already present in DB?
+		my $old_item = $self->getItem ( DATATYPE => $scan_status."_".$baseType, KEY => $key );
+		if ($old_item)
+		{
+			$old_status = $scan_status;
+			last;
+		}
 	}
 
-	## print ":::: (storeItem) DEBUG => #1<BR>\n";
-	## print ":::: (storeItem) DATATYPE => $dataType<BR>\n";
-	## print ":::: (storeItem) OBJECT => $object<BR>\n";
+	## Open the DB
+	return $self->setError (2151021, "OpenCA::DB->storeItem: Cannot open database ($errno)\n$errval")
+		if( not $self->dbOpen( DATATYPE=>$dataType ));
 
-	## if we have no db for that DATATYPE or no data then return
-	return if ((not $object) or (not exists $self->{dBs}->{$dataType}));
-	## print ":::: (storeItem) DEBUG => #2<BR>\n";
+	if( not exists $self->{dbms_h}{$key} ) {
+		## Update the DB Elements count
+		if ( exists $self->{dbms_search_h}{"ELEMENTS"} ) {
+		 	$tmp = $self->{dbms_search_h}{"ELEMENTS"};
+			$tmp++;
 
-	## Here we define the base type to decide where to store the
-	## passed data
-	return if (not $baseType = $self->getBaseType(DATATYPE=>$dataType));
+			## Delete the record or we will duplicate it
+			delete $self->{dbms_search_h}{"ELEMENTS"};
 
-
-	## If the data is convertible, let's have only one internal
-	## format to handle with
-	## print "::: TYPE => ".$object->getParsed()->{HEADER}->{TYPE}."<BR>\n";
-	if( $object->getParsed()->{HEADER}->{TYPE} !~ /(PKCS#10|IE)/ ) {
-	 	$converted = $object->getParsed()->{ITEM};
-	} else {
-		if( $self->{defStoredFormat} eq "PEM" ) {
-			$converted = $object->getPEM();
-		} elsif ( $self->{defStoredFormat} eq "DER" ) {
-			$converted = $object->getDER();
+			## Store the new value
+		 	$self->{dbms_search_h}{"ELEMENTS"}=$tmp;
+			
 		} else {
-			$converted = $object->getParsed()->{ITEM};
-		}
-		$converted .= $object->getParsed()->{SIGNATURE};
-	}
-
-	$converted = $self->getBody( $converted );
-
-	## Now we have BASIC and EXTENDED DATATYPE, we store the data
-	## into the basic dB
-	$fileName = "$self->{dbDir}/$self->{dBs}->{$baseType}->{FILE}";
-	$headFileName = "$self->{dbDir}/$self->{dBs}->{$baseType}->{INFO}";
-
-	if( $dataType =~ /CERTIFICATE/ ) {
-		$digest= $object->getParsed()->{HASH};
-	} else {
-		$digest= $self->{backend}->getDigest( DATA=> $converted . $$ );
-	}
-	if( $mode eq "UPDATE" ) {
-		## print ":::: DELETING OLD ITEM => $serial<BR>\n";
-		return if ( not $self->deleteItem( DATATYPE=>$dataType,
-							KEY=>$serial ));
-	}
-
-	## If we are adding a duplicate of the certificate we should
-	## at least delete the old value or update it's contents. The
-	## safest way is to delete the old one and then write in a new
-	## one...
-	if( ($dataType =~ /CERTIFICATE/) and ($mode ne "UPDATE" ) and
-			($self->getData( FILENAME=>$fileName, KEY=>$digest) )) {
-		## Data Already exists in database, this should not happen
-		## if datatype is CERTIFICATE, we assume it is an error, here
-		## (if not an update... )
-		return (-1);
-	}
-
-	## We add the record and update the IDX one calling the addRecord()
-	## print ":::: (storeItem) ADDING RECORD => $digest<BR>\n";
-	return if ( not $self->addRecord( FILENAME=>$fileName,
-			KEY=>$digest, DATA=>$converted ));
-	## print ":::: (storeItem) ADDED RECORD => $digest<BR>\n";
-
-	## Let's update the INFO value
-	## print ":::: (storeItem) HEADER => $digest ($headFileName)<BR>\n";
-	if( exists $object->getParsed()->{HEADER} ) {
-		return if( not $self->saveHash( FILENAME=>$headFileName,
-			KEY=>$digest, IDX=>$object->getParsed()->{HEADER} ));
-	}
-	## print ":::: (storeItem) HEADER => DONE<BR>\n";
-
-	## Now add the couple SERIAL=HASH to the appropriate DATATYPE dB
-	## We get the serial (that identifies the object when searching or
-	if( $baseType eq $dataType ) {
-		$dataType = "VALID_" . $dataType;
-	}
-
-	$hashFileName = "$self->{dbDir}/$self->{dBs}->{$dataType}";
-	if( $mode eq "UPDATE" ) {
-		## print ":::: UPDATING ITEM => $serial<BR>\n";
-		return if ( not $serial = 
-			$self->addRecord( FILENAME => $hashFileName,
-					KEY=>$dbKey, DATA=>$digest));
-	} else {
-		return if ( not $serial = 
-			$self->addRecord( FILENAME => $hashFileName,
-				KEY=>$dbKey, DATA=>$digest));
-	}
-
-	## Let's add extra searching path... the attr list will be stored
-	## into the search dB.
-	## we expect a great number of requests archivied/processed by the
-	## same RA or OPERATOR ( for example ), we'll see later...
-	@attributes = $self->getSearchAttributes( DATATYPE=>$dataType );
-
-	## Get the new filename to use from the search subsection
-	$fileName = "$self->{dbDir}/$self->{dBs}->{SEARCH}->{$dataType}";
-
-	for $attr ( @attributes ) {
-		my ( $key, $list, $attrVal );
-
-		if( $attr =~ /(RA|TYPE)/i ) {
-			$attrVal = $object->getParsed()->{HEADER}->{$attr};
-		} else {
-			$attrVal = $object->getParsed()->{$attr};
-		}
-		## print "::: PARSED ATTRIBUTE $attr => " .
-				$object->getParsed()->{$attr} ."<BR>\n";
-		## print "::: ADDING ATTRIBUTE $attr => $attrVal<BR>\n";
-
-		next if ( (not $attrVal) or ($attrVal eq "" ) or 
-							($attrVal eq "n/a"));
-	
-		$key = "$attr:$attrVal";
-		$list = $self->getData( FILENAME=>$fileName, KEY=>$key );
-
-		## Is it really needed the control on the existance of the
-		## $list variable ???
-		if( ( not $list ) or ( not $list =~ /\:$serial/ )) {
-			## We add here the serial it has in the
-			## {$dataType} dB
-			$list .= ":$serial";
-
-			next if ( not $self->saveData( FILENAME=>$fileName,
-						KEY=>$key, DATA=>$list) );
+		 	$self->{dbms_search_h}{"ELEMENTS"}=1;
 		}
 	}
+	$self->{dbms_h}{$key}=$item;
 
-	## Now we should set all the extra variables to the search
-	## facilities
-	## print ":::: (storeItem) DONE => OK.<BR>\n";
-	return $serial;
+	## Updating the searching facility
+	foreach ( $self->getSearchAttributes( $dataType )) {
+		my ( $k, $v, $md5 );
+
+		next if (not $value = ($parsed->{$_} or $parsed->{HEADER}->{$_}));
+
+		$k = $value;
+		$v = $key;
+
+		if( $self->{dbms_search}->find_dup( $k, $v ) != 0 ) {
+			$self->{dbms_search_h}{$k} = $key;
+		};
+	}
+
+	$self->{dbms}->sync();
+	$self->{dbms_search}->sync();
+	$self->dbClose();
+
+	## remove old status if it differs from new status
+	if ($old_status and $old_status ne $status)
+	{
+		return $self->setError (2151081, "OpenCA::DB->storeItem: Cannot delete old status from the database ".
+					"($errno)\n$errval")
+			if (not $self->deleteItem( DATATYPE=>$old_status."_".$baseType,
+                                                   KEY=>$key));
+	}
+
+	return 1;
 }
 
-## sub exists {
-## 	## Returns True (dbKey) if the key exists in dB, else
-## 	## it will return NULL False (null);
-## 
-## 	my $self = shift;
-## 	my $keys = { @_ };
-## 
-## 	my ( $ret, $hash, $fileName, $item, $hash );
-## 
-## 	my $type   	= $keys->{DATATYPE};
-## 	my $baseType	= $self->getBaseType( DATATYPE=>$type );
-## 	my $dbKey    	= $keys->{KEY};
-## 
-## 	$dbKey = hex ( $dbKey ) if( $self->isCertDataType( DATATYPE=>$type ));
-## 	$ret   = $self->existDB( DATATYPE=> $type, KEY=>$dbKey );
-## 
-## 	return $dbKey;
-## }
-
-sub existsDB {
-	## Returns True (dbKey) if the key exists in dB, else
-	## it will return NULL False (null);
-
+sub parseDataType {
 	my $self = shift;
-	my $keys = { @_ };
+	my $dataType = shift;
 
-	my ( $hash, $fileName, $item, $hash );
+	my ( $k1, $k2 );
 
-	my $type   	= $keys->{DATATYPE};
-	my $baseType	= $self->getBaseType( DATATYPE=>$type );
-	my $dbKey    	= $keys->{KEY};
-
-	$type = "VALID_" . $type if( $baseType eq $type );
-
-	$fileName = "$self->{dbDir}/$self->{dBs}->{$type}";
-	return if ( (not $fileName) or ( $fileName =~ /HASH/ ) or
-						(not $dbKey) or (not $type));
-
-	$hash = $self->getData( FILENAME=>$fileName, KEY=>$dbKey);
-	if( $hash ) {
-		return $dbKey;
+	if ($dataType =~ /CA_CERTIFICATE/) {
+		$k2 = "CA_CERTIFICATE";
+		$k1 = $dataType;
+		$k1 =~ s/CA_CERTIFICATE//;
+		$k1 =~ s/_$//;
 	} else {
-		return;
+		( $k1, $k2 ) = ( $dataType =~ 
+			/^([^\_]+)*\_*(CA_CERTIFICATE|CERTIFICATE|CRL|REQUEST|CRR)/);
 	}
+
+	## if( $k1 eq "" ) {
+	## 	$k1 = "VALID" if ( $k2 =~ /CERTIFICATE|CRL/ );
+	## 	$k1 = "PENDING" if ( $k2 =~ /REQUEST|CRR/ );
+	## }
+
+	return ( $k2, $k1 );
+}
+
+sub getSearchAttributes {
+	my $self 	= shift;
+	my $dataType    = shift;
+
+	my @ret = ();
+	my ( $baseType, $status );
+
+	return $self->setError (2133011, "OpenCA::DB->getSearchAttributes: No datatype specified.")
+		if ( not $dataType );
+
+	( $baseType, $status ) = $self->parseDataType( $dataType );
+
+	if ( $baseType =~ /REQUEST/ ) {
+		if( $status =~ /NEW|RENEW|PENDING/ ) {
+			@ret = ( "DN", "CN", "EMAIL", "RA", "SCEP_TID" );
+		} elsif ( $status =~ /SIGNED|APPROVED/ ) {
+			@ret = ( "RA", "DN", "CN", "EMAIL", "SCEP_TID", "OPERATOR" );
+		} else {
+			@ret = ( "DN","CN","EMAIL", "SCEP_TID" );
+		}
+        } elsif ( $baseType =~ /CRR/ ) {
+		if( $status =~ /NEW|RENEW|PENDING|SIGNED|APPROVE|DELETED|ARCHIVED/ ) {
+			@ret = ( "REVOKE_CERTIFICATE_SERIAL", "REVOKE_CERTIFICATE_DN",
+				 "REVOKE_CERTIFICATE_KEY_DIGEST" );
+		} else {
+			@ret = ( "REVOKE_CERTIFICATE_SERIAL", "REVOKE_CERTIFICATE_DN" );
+		}
+	} elsif ( $baseType =~ /CA_CERTIFICATE/ ) {
+		@ret = ( "DN", "CN", "EMAIL", "KEY_DIGEST", "PUBKEY" );
+	} elsif ( $baseType =~ /CERTIFICATE/ ) {
+		@ret = ( "DN", "CN", "EMAIL", "KEY_DIGEST", "PUBKEY", "CSR_SERIAL" );
+	};
+
+	return @ret;
 }
 
 sub getItem {
@@ -825,105 +506,69 @@ sub getItem {
 	my $self = shift;
 	my $keys = { @_ };
 
-	my ( $fileName, $item, $txtItem, $body, $header, $hash, $tmpBody );
+	my ( $baseType, $status, $cursor, $obj, $val );
 
-	my $type   	= $keys->{DATATYPE};
-	my $baseType	= $self->getBaseType( DATATYPE=>$type );
+	my $dataType   	= $keys->{DATATYPE};
 
-	my $serial    	= $keys->{KEY};  ## Key passed when stored item
-	my $mode   	= $keys->{MODE}; ## Actually only RAW or NULL
+	my $key    	= $keys->{KEY};    ## Key passed when stored item
+	my $mode   	= $keys->{MODE};   ## Actually only RAW or NULL
 
-	if( $baseType eq $type ) {
-		$type = "VALID_" . $type;
-	}
+	return $self->setError (2161011, "OpenCA::DB->getItem: No datatype specified.")
+		if ( not $dataType );
 
-	## Let's make some needed check
-	$fileName = "$self->{dbDir}/$self->{dBs}->{$type}";
+	( $baseType, $status ) = $self->parseDataType( $dataType );
 
-	return if ( (not $fileName) or ( $fileName =~ /HASH/ ) or
-					(not $serial) or (not $type));
+	if ($baseType =~ /$dataType/i) {
+		my @statuslist;
 
-	## Now we get the HASH value, with this we get the corresponding
-	## object
-	if( $self->isCertDataType( DATATYPE=>$type) ) {
-	 	## print "::: (getItem) SERIAL => $serial<BR>\n";
-	 	$serial = hex ( $serial );
-	 	## print "::: (getItem) REAL SERIAL => $serial<BR>\n";
-	};
-
-	return if ( not ( $hash = $self->getData( FILENAME=>$fileName,
-					 KEY=>$serial )));
-	## Here we get the txt object
-	$fileName = "$self->{dbDir}/$self->{dBs}->{$baseType}->{FILE}";
-
-	$body = $self->getData( FILENAME=>$fileName, KEY=>$hash );
-	return if ( not $body );
-	
-	## Let's get the extra info in the HEADER section of the object
-	$fileName = "$self->{dbDir}/$self->{dBs}->{$baseType}->{INFO}";
-	$header = $self->getData( FILENAME=>$fileName, KEY=>$hash );
-
-	## We may want to convert to a default format all objects
-	## excluding the "TXT" ones...
-	if( $body !~ /SPKAC\s*=|RENEW\s*=|REVOKE\s*=/ ) {
-		$tmpBody = $self->{backend}->dataConvert( 
-					 DATATYPE=>$baseType,
-					 INFORM=> $self->{defStoredFormat},
-					 OUTFORM=> $self->{defOutFormat},
-					 DATA=> $body );
-
-		$body = $tmpBody . $self->getSignature( $body );
-	}
-	
-	## This $txtItem have the original object as it was stored
-	## with all infos in it
-	$txtItem = $self->{beginHeader} . "\n" . $header . "\n" .
-				$self->{endHeader} . "\n" . $body ;
-	## $txtItem = $body;
-
-	## If it was asked only the text version, we send out only that
-	## without generating an OBJECT from it
-	if( $mode eq "RAW" ) {
-		return $txtItem;
-	}
-
-	## Build an Object from retrieved DATA
-	if( $baseType =~ /CERTIFICATE/ ) {
-		$item = new OpenCA::X509( SHELL=>$self->{backend},
-			 	          INFORM=>$self->{defOutFormat},
-			        	  DATA=>$txtItem );
-	} elsif ( $baseType =~ /CRL/ ) {
-		$item = new OpenCA::CRL( SHELL=>$self->{backend},
-			        	 INFORM=>$self->{defOutFormat},
-			        	 DATA=>$txtItem );
-	} elsif ( $baseType =~ /CRR/ ) {
-		$item = new OpenCA::CRR( SHELL=>$self->{backend},
-			        	 DATA=>$txtItem );
-	} elsif ( $baseType =~ /REQUEST/ ) {
-		my $format = $self->{defOutFormat};
-
-		if( $txtItem =~ /SPKAC\s*=|RENEW\s*=|REVOKE\s*=/ ) {
-			( $format ) = ( $txtItem =~ /(SPKAC|RENEW|REVOKE)/ );
+		## the order is important to fix buggy code!!!
+		if ($baseType =~ /CA_CERTIFICATE/) {
+			@statuslist = ("EXPIRED", "VALID");
+		} elsif ($baseType =~ /CERTIFICATE/) {
+			@statuslist = ("REVOKED", "SUSPENDED", "EXPIRED", "VALID");
+		} elsif ($baseType =~ /CRL/) {
+			@statuslist = ("VALID");
+		} elsif ($baseType =~ /REQUEST/) {
+			@statuslist = ("ARCHIVED", "DELETED", "APPROVED", "SIGNED", "PENDING", "RENEW", "NEW");
+		} elsif ($baseType =~ /CRR/) {
+			@statuslist = ("ARCHIVED", "DELETED", "APPROVED", "SIGNED", "PENDING", "NEW");
+		} else {
+			## unknown basetype
+			return $self->setError (2161012, "OpenCA:DB->getItem: Unknown basetype.");
 		}
 
-		$item = new OpenCA::REQ( SHELL=>$self->{backend},
-			        	 INFORM=>$format,
-			        	 DATA=>$txtItem );
-	} else {
-		## if we cannot build the object there is probably
-		## an error, retrun a void ...
-		return;
+		## try to find an object
+		foreach $status (@statuslist) {
+			my $item = $self->getItem (
+						DATATYPE => $status."_".$baseType,
+						KEY => $key,
+						MODE => $mode);
+			return $item if ($item);
+		}
+
+		## object not found
+		return $self->setError (2161013, "OpenCA:DB->getItem: Object not found in database ($errno)\n$errval.");
 	}
 
-	if( $self->isCertDataType( DATATYPE=>$type) ) {
-		$item->{parsedItem}->{DBKEY} = sprintf( "%lx",$serial);
-	} else {
-		$item->{parsedItem}->{DBKEY} = $serial;
+	return $self->setError (2161021, "OpenCA::DB->getItem: Cannot open database ($errno)\n$errval")
+		if ( not $self->dbOpen( DATATYPE=>$dataType, STATUS=>$status));
+
+	## Retrieve the object
+	return $self->setError (2161022, "OpenCA::DB->getItem: The content of the databasefield is empty.")
+		if ( $self->{dbms}->get ($key, $val) != 0 );
+
+	## If MODE eq "RAW" we simply send the object out.
+	if( $mode eq "RAW" ) {
+		$self->dbClose();
+		return $val;
 	}
+	## If mode ne "RAW" we build the OBJECTS and return their list.
+	$obj = $self->createObject( DATATYPE=>$dataType, DATA => $val);
+	$obj->getParsed()->{DBKEY} = $key;
 
-
-	## We return the object
-	return $item;
+	## We return the object(s)
+	$self->dbClose();
+	return $obj;
 
 }
 
@@ -933,20 +578,31 @@ sub getNextItem {
 	my $self = shift;
 	my $keys = { @_ };
 
-	my $key 	= (($keys->{KEY}) or (-1));
+	my $key 	= $keys->{KEY};
+	$key = -1 if (not defined $key);
 	my $dataType 	= $keys->{DATATYPE};
 	my $mode 	= $keys->{MODE};
 
-	my ( $idx, $fileName, $dbKey, $item );
+	return $self->setError (2162021, "OpenCA::DB->getNextItem: Cannot open database ($errno)\n$errval")
+		if (not $self->dbOpen( DATATYPE=>$dataType));
 
-	## Return NULL if we don't get Next Item Key
-	return if( not $dbKey = $self->getNextItemKey( @_ ));
+	my $dbstat;
+	my $val;
+	if ( ($self->{dbms}->seq($key, $val, R_CURSOR) != 0) or
+	     ($keys->{KEY} != $key) ) {
+		## the key doesn't exist
+		$dbstat = $self->{dbms}->seq($key, $val, R_FIRST);
+	} else {
+		do {
+			$dbstat = $self->{dbms}->seq($key, $val, R_NEXT );
+		} while (($dbstat == 0) and ($key eq "ELEMENTS"));
+	}
 
-	## Return dbKey if we have a RAW request
-	return $dbKey if( $mode eq "RAW" );
+	return undef
+		if ($dbstat < 0);
 
 	## Return object (if any)
-	return $self->getItem( DATATYPE=>$dataType, MODE=>$mode,KEY=>$dbKey);
+	return $self->getItem( DATATYPE=>$dataType, MODE=>$mode, KEY=>$key);
 }
 
 sub getPrevItem {
@@ -956,218 +612,103 @@ sub getPrevItem {
 	my $keys = { @_ };
 
 	my $key 	= $keys->{KEY};
+	$key = -1 if (not exists $keys->{KEY});
 	my $dataType 	= $keys->{DATATYPE};
 	my $mode 	= $keys->{MODE};
 
-	my ( $idx, $fileName, $dbKey, $item );
+	return $self->setError (2163021, "OpenCA::DB->getPrevItem: Cannot open database ($errno)\n$errval")
+		if (not $self->dbOpen( DATATYPE=>$dataType));
 
-	## Let's get prev id
-	return if( not $dbKey = $self->getPrevItemKey( @_ ));
-
-	return $dbKey if( $mode eq "RAW" );
-
-	## Return item
-	return $self->getItem(DATATYPE=>$dataType, MODE=>$mode, KEY=>$dbKey);
-}
-
-sub getNextItemKey {
-	## Get Next Item given a serial number
-
-	my $self = shift;
-	my $keys = { @_ };
-
-	my $key 	= $keys->{KEY};
-	my $dataType 	= $keys->{DATATYPE};
-
-	my ( $idx, $fileName, $item, $isCert );
-
-	## print "::: (getNextItemKey) PASSED KEY => $key<BR>\n";
-	## print "::: (getNextItemKey) PASSED DATATYPE => $dataType<BR>\n";
-
-	return if (not $dataType);
-
-	$fileName = "$self->{dbDir}/$self->{dBs}->{$dataType}";
-	return if (not $idx = $self->getIndex( DATATYPE=>"$dataType",
-						FILENAME=>"$fileName" ));
-
-	## If it is a CERT dataType, we want the DECIMAL value
-	$key = hex( $key ) if($self->isCertDataType( DATATYPE=>$dataType ));
-
-	if( not $key ) {
-		$key = $idx->{FIRST};
-
-		if( $self->isCertDataType( DATATYPE=>$dataType )) {
-			$key = sprintf( "%lx", $key);
-		}
-
-		## print "::: (getNextItemKey) No Key Given => Returning $key<BR>\n";
-
-		return $key;
-	}
-
-	while( $key <= $idx->{LAST} ) {
-		$key++;
-
-		## print "::: (getNextItemKey) CURRENT KEY => $key<BR>\n";
-		last if($self->existsDB(DATATYPE=>"$dataType", KEY=>$key));
-	}
-
-	if( $key <= $idx->{LAST} ) {
-		if( $self->isCertDataType( DATATYPE=>$dataType) ) {
-			return sprintf("%lx", $key);
-		}
-
-		return $key;
+	my $dbstat;
+	my $val;
+	if ( ($key == -1) or
+	     ($self->{dbms}->seq($key, $val, R_CURSOR) != 0) or
+	     ($keys->{KEY} != $key) ) {
+		## the key doesn't exist
+		$dbstat = $self->{dbms}->seq($key, $val, R_LAST);
 	} else {
-		## print "::: (getNextItemKey) NO KEY FOUND => $key (LAST " . 
-							$idx->{LAST} . "<BR>\n";
-		return;
-	}
-}
-
-sub getPrevItemKey {
-	## Get Prev Item Key
-
-	my $self = shift;
-	my $keys = { @_ };
-
-	my $key 	= $keys->{KEY};
-	my $dataType 	= $keys->{DATATYPE};
-
-	my ( $idx, $fileName, $item );
-
-	$fileName = "$self->{dbDir}/$self->{dBs}->{$dataType}";
-	return if (not $idx = $self->getIndex( DATATYPE=>$dataType,
-						FILENAME=>$fileName ));
-
-	## print "::: (getPrevItemKey) ORIG KEY => $key<BR>\n";
-
-	if( not $key ) {
-		$key = $idx->{FIRST};
-
-		if( $self->isCertDataType( DATATYPE=>$dataType )) {
-			$key = sprintf( "%lx", $key);
-		}
-
-		return $key;
+		do {
+			$dbstat = $self->{dbms}->seq($key, $val, R_PREV );
+		} while (($dbstat == 0) and ($key eq "ELEMENTS"));
 	}
 
-	## If it is a CERT dataType, we want the DECIMAL value
-	$key = hex( $key ) if($self->isCertDataType( DATATYPE=>$dataType ));
+	return undef
+		if ($dbstat < 0);
 
-	while( $key > 0 ) {
-		$key--;
-		last if( $self->existsDB( DATATYPE=>$dataType, KEY=>$key ));
-	}
-
-	if( $key > 0 ) {
-		## We return HEX value if a Cert dataType is passed
-		if($self->isCertDataType(DATATYPE=>$dataType)) {
-			return sprintf("%lx",$key);
-		}
-
-		return $key;
-	} else {
-		return;
-	}
-}
-
-sub getFirstItemKey {
-	## Get First Item Key a serial number
-
-	my $self = shift;
-	my $keys = { @_ };
-
-	my $dataType 	= $keys->{DATATYPE};
-
-	my ( $idx, $fileName, $key );
-
-	$fileName = "$self->{dbDir}/$self->{dBs}->{$dataType}";
-	return if (not $idx = $self->getIndex( DATATYPE=>$dataType,
-						FILENAME=>$fileName ));
-
-	$key = $idx->{FIRST};
-
-	if( $key == -1 ) {
-		return;
-	} else {
-		$key = sprintf("%lx",$key) if($self->isCertDataType($keys));
-		return $key;
-	}
+	## Return object (if any)
+	return $self->getItem( DATATYPE=>$dataType, MODE=>$mode, KEY=>$key);
 }
 
 sub deleteItem {
 
-	## Store a provided Item (DATA) provided the exact
-	## DATATYPE. KEY (position in dB) data to match will
-	## be automatically chosen on a DATATYPE basis.
-
-	## The INFORM is used to get the data input format
-	## PEM|DER|NET|SPKAC
+	## Delete an Item Entry from the DB
 
 	my $self = shift;
 	my $keys = { @_ };
 
-	my $type       = $keys->{DATATYPE};
-	my $key        = $keys->{KEY};
+	my $dataType    = $keys->{DATATYPE};
+	my $key         = $keys->{KEY};
 
-	my ( $fileName, $baseType, $hash, $i, $sKey, $sVal, $item );
+	return $self->setError (2152011, "OpenCA::DB->deleteItem: No datatype specified.")
+		if (not $dataType);
+	return $self->setError (2152012, "OpenCA::DB->deleteItem: No key specified.")
+		if (not $dataType);
 
-	return if ( (not $key ) or ( not exists $self->{dBs}->{$type}) );
+	my ( $val, $cursor, $c_stat, @attrs, $obj, $parsed );
+	my ( %h, %sh );
 
-	my $baseType = $self->getBaseType( DATATYPE=>$type );
+	my ( $baseType, $status ) = $self->parseDataType( $dataType );
 
-	if( not $item = $self->getItem( DATATYPE=>$type, KEY=>$key )) {
-		return;
-	}
+	## Base Status is VALID
+	$status = "VALID" if ( not $status );
 
-	## If it is a CERT dataType, we want the DECIMAL value
-	if( $self->isCertDataType( DATATYPE=>$type )) {
-		$key = hex($key);
-	}
+	return $self->setError (2152021, "OpenCA::DB->deleteItem: Cannot load object from database ($errno)\n$errval")
+		if (not $obj = $self->getItem(DATATYPE=>$dataType,KEY=>$key));
+	return $self->setError (2152022, "OpenCA::DB->deleteItem: Cannot open database ($errno)\n$errval")
+		if ( not $self->dbOpen( DATATYPE=>$dataType, STATUS=>$status));
+	return $self->setError (2152023, "OpenCA::DB->deleteItem: Key doesn't exist in the database ($errno)\n$errval")
+		if( not exists $self->{dbms_h}{$key} );
 
-	$fileName = "$self->{dbDir}/$self->{dBs}->{$type}";
-	return if(not $hash = 
-		$self->getData(FILENAME=>$fileName,KEY=>$key));
+	delete $self->{dbms_h}{$key};
 
-	$fileName = "$self->{dbDir}/$self->{dBs}->{SEARCH}->{$type}";
+	## Get Parsed Object
+	$parsed = $obj->getParsed();
 
-	## print "::: DEBUG => SEARCHING ATTRIBUTES<BR>\n";
-	for $i ( $self->getSearchAttributes( DATATYPE=>$type ) ) {
-		$sKey = "$i:" . ( $item->getParsed()->{$i} or
-			$item->getParsed()->{HEADER}->{$i} );
+	## Delete The Search Objects
+	foreach ( $self->getSearchAttributes( $dataType )) {
+		my ( $k, $v, $md5 );
 
-		## print "::: ITEM HASH => $sKey ($i)<BR>\n";
-		next if ( not $sVal = $self->getData( FILENAME=>$fileName,
-							KEY=>$sKey ));
+		next if( not $val = $parsed->{$_} );
 
-		## print "::: ITEM HASH VAL => $sVal<BR>\n";
-		$sVal =~ s/\:$key//;
-		## print "::: NEW ITEM HASH VAL => $sVal<BR>\n";
+		## if( $_ eq "KEY" ) {
+		## 	## We do add an hash instead of the real Key
+		## 	$md5 = new Digest::MD5;
+		## 	$md5->add( $val );
+		## 	$k = $md5->hexdigest();
+		## } else {
+		## 	$k = $val;
+		## }
 
-		if( length( $sVal ) < 2 ) {
-			$self->deleteRecord(FILENAME=>$fileName, KEY=>$sKey,
-					DATATYPE=>$type, MODE=>"RAW" );
-			## print "::::: ERASED RECORD $sKey!<BR>\n";
-		} else {
-			return if ( not $self->saveData( FILENAME=>$fileName,
-						KEY=>$sKey, DATA=>$sVal ));
+		$k = $val;
+
+		if ( $self->{dbms_search}->find_dup( $k, $key ) == 0 ) {
+			$self->{dbms_search}->del_dup( $k, $key );
 		}
 	}
 
-	$fileName = "$self->{dbDir}/$self->{dBs}->{$baseType}->{FILE}";
-	## print "::: DELETING $hash ($fileName).\n";
-	return if ( not $self->deleteRecord(FILENAME=>$fileName, 
-				DATATYPE=>$type, KEY=>$hash ));
-
-	$fileName = "$self->{dbDir}/$self->{dBs}->{$type}";
-	## print "::: DELETING $key ($fileName) $type.\n";
-	return if ( not $self->deleteRecord(FILENAME=>$fileName,
-					DATATYPE=>$type, KEY=>$key ));
-
+	## Update the DB Elements count
+	if( not exists $self->{dbms_search_h}{"ELEMENTS"} or 
+				$self->{dbms_search_h}{"ELEMENTS"} <= 1 ) {
+		$self->{dbms_search_h}{"ELEMENTS"}= 0;
+	} else {
+		$self->{dbms_search_h}{"ELEMENTS"}--;
+	}
+	
+	$self->dbClose();
 	return 1;
 }
 
+## this function is now deprecated
 sub updateStatus {
 
 	## Updates the status of an element, in DBMS actually
@@ -1177,19 +718,7 @@ sub updateStatus {
 	my $self = shift;
 	my $keys = { @_ };
 
-	my $item    = $keys->{OBJECT};
-	my $oldType = $keys->{DATATYPE};
-	my $newType = $keys->{NEWTYPE};
-
-	return if ( not exists $self->{dBs}->{$newType} );
-	return if ( not $self->deleteItem( DATATYPE=>$oldType,
-					KEY=>$item->getParsed()->{DBKEY} ));
-
-	## print "::: OBJECT => DELETED SUCCESSFULLY<BR>\n";
-	return if (not $self->storeItem(DATATYPE=>$newType, OBJECT=>$item));
-	## print "::: OBJECT => ADDEDD SUCCESSFULLY<BR>\n";
-
-	return 1;
+	return $self->storeItem (DATATYPE => $keys->{NEWTYPE}, OBJECT => $keys->{OBJECT});
 }
 
 sub elements {
@@ -1201,17 +730,24 @@ sub elements {
 	my $self = shift;
 	my $keys = { @_ };
 
-	my $type = $keys->{DATATYPE};
+	my $dataType = $keys->{DATATYPE};
+	my ( $ret );
 
-	my $ret = 0;
-	my $fileName;
+	if (not $self->dbOpen(DATATYPE=> $dataType)) {
+		## perhaps a datatype without a status
+		my ($baseType, $status) = $self->parseDataType ($dataType);
+		if ($status) {
+			return $self->setError (2164011, "OpenCA::DB->elements: Cannot open database ($errno)\n$errval")
+		}
+		my @list = $self->searchItems (DATATYPE => $dataType, MODE => "RAW");
+		return scalar @list;
+	}
 
-	return if ( not exists $self->{dBs}->{$type} );
-	$fileName = "$self->{dbDir}/$self->{dBs}->{$type}";
+	$ret = ( $self->{dbms_search_h}{"ELEMENTS"} or "0" );
 
-	$ret = $self->getIndex( FILENAME=>$fileName );
+	$self->dbClose();
 
-	return $ret->{ELEMENTS};
+	return $ret;
 }
 
 sub rows {
@@ -1242,450 +778,230 @@ sub searchItems {
 	my $keys = { @_ };
 
 	my @retList  = ();
-	my ( $dataType, $tmp, $count );
+	my ( $count, $key, $obj, @dupList, %ret );
+	my ( $dbstat, $val, @subList, $st );
 
-	my $type     = $keys->{DATATYPE};
-	my $mode     = $keys->{MODE};
+	my $dataType   = $keys->{DATATYPE};
+	my $mode       = $keys->{MODE};
 
-        my $baseType = $self->getBaseType( DATATYPE=>$dataType );
+        my ( $baseType, $status ) = $self->parseDataType($dataType);
 
-	$type = "VALID_$type" if( $type eq $baseType );
-
-	## We remove the old value, we want to pass it by hand to the
-	## searchDB function
-	delete ( $keys->{DATATYPE} );
-
-	## Check if some attributes are to be searched or if it is
-	## a simple listItems request like... count == 0 means listItems...
-	$count = 0;
-	foreach $tmp ( keys %$keys ) {
-		next if ( $tmp =~ /ITEMS/i );
-		next if ( $tmp =~ /FROM/i );
-		next if ( $tmp =~ /TO/i );
-		next if ( $tmp =~ /MODE/i );
-		$count++;
-	}
-
-	foreach $dataType ( keys %{$self->{dBs}} ) {
-		next if (($dataType =~ /HASH/) or ($dataType eq $baseType));
-
-		if ( $dataType =~ /$type/i ) {
-			my @plist;
-
-			$keys->{DATATYPE} = $dataType;
-
-			if( $count == 0 ) {
-				@plist = $self->listItems( DATATYPE=>$dataType,
-								MODE=>$mode )
-			} else {
-				@plist = $self->searchItemDB( $keys );
-			}
-
-			push ( @retList, @plist );
-		}
-	}
-
-	if( $mode eq "ROWS" ) {
-		return $#retList + 1;
+	## If no "status" is supplied we search the whole DB
+	if( not $status ) {
+		@subList = $self->getSubTypes( $baseType );
 	} else {
+		@subList = ( $status );
+	}
+
+	## Let's search
+	foreach $st ( @subList ) {
+
+		## Build the full dataType
+		$dataType = "${st}_${baseType}";
+
+                ## If Attribute Serial is an exact Search
+                if( exists( $keys->{SERIAL}) ) {
+                        $obj = $self->getItem( DATATYPE=>$dataType,
+                                        KEY=>$keys->{SERIAL} );
+                        push( @retList, $obj ) if( $obj );
+                        next;
+                }
+
+		## Open DBMS
+		return $self->setError (2166011, "OpenCA::DB->searchItems: Cannot open database ($errno)\n$errval")
+			if( not $self->dbOpen( DATATYPE=>$dataType ));
+
+		$count = 0;
+
+		## If $count is 0 at the end, then it is a searchList
+		foreach( $self->getSearchAttributes( $dataType )) {
+			$count++ if( exists $keys->{$_} );
+		}
+
+		if( $count == 0 ) {
+			push (@retList, $self->listItems(DATATYPE=>$dataType));
+		} else {
+			$count = 0;
+			## Check every attribute
+			foreach ( $self->getSearchAttributes( $dataType )) {
+				next if( $keys->{$_} eq "" );
+
+				$key = $keys->{$_};
+
+				## Get results for this search attribute
+				@dupList = $self->{dbms_search}->get_dup($key);
+
+				foreach (@dupList) {
+					next if ((exists $ret{$_}) or 
+					     (not exists $self->{dbms_h}{$_}));
+
+					## We don't want to duplicate the work
+					$ret{$_}=1;
+	
+					if( $mode =~ /ROWS/i ) {
+						$count++;
+						next;
+					} elsif ( $mode eq "RAW" ) {
+						push(@retList, $self->{dbms_h}{$_} );
+					} else {
+						$obj = $self->createObject(
+						    DATATYPE   => $dataType,
+						    DATA       => $self->{dbms_h}{$_});
+						$obj->getParsed()->{DBKEY} = $_;
+						$obj->{DATATYPE}= $dataType;
+						push(@retList,$obj) if ($obj);
+					}
+				}
+			}
+		}
+		$self->dbClose();
+	}
+
+	if( $mode =~ /ROWS/i ) {
+		return scalar (@retList);
+	} else { 
 		return @retList;
 	}
-}
-
-sub searchItemDB {
-	my $self = shift;
-	my $keys = shift;
-
-	## Get the dataType
-	my $dataType 	= $keys->{DATATYPE};
-	my $mode	= $keys->{MODE};
-	my $maxItems 	= $keys->{ITEMS};
-	my $from     	= ( $keys->{FROM} or 0 );
-
-	my ( $fileName, $txtList, $key, $dbVal, $dbKey, $ret, $i );
-
-	my @retList 	= ();
-	my @objRetList	= ();
-	my $retNum 	= 0;
-
-	## We delete the not needed keys
-	delete( $keys->{DATATYPE} );
-	delete( $keys->{MODE} );
-	delete( $keys->{ITEMS} );
-	delete( $keys->{FROM} );
-
-	## print "::: DATATYPE => $dataType<BR>\n";
-	return if ( not exists $self->{dBs}->{SEARCH}->{$dataType});
-	## print "::: SEARCH => $dataType<BR>\n";
-
-	## Let's Build the SEARCH dB fileName
-	$fileName = "$self->{dbDir}/$self->{dBs}->{SEARCH}->{$dataType}";
-
-	## For every keyword let's get the list of values
-	while( ($dbKey, $dbVal) = each %$keys ) {
-		$key = "$dbKey:$dbVal";
-
-		## print "::: GETTING KEY => $key<BR>\n";
-		## print "::: FILENAME $dataType => $fileName<BR>\n";
-		$txtList->{$dbKey} = 
-			$self->getData( FILENAME=>$fileName, KEY=>$key );
-	}
-
-	## We want to eliminate any reference to serials who don't have
-	## all the fields required, here we buld a list with number of
-	## time a serial appear
-	$i = 0;
-	foreach $key ( keys %$txtList ) {
-		my ( @tmp, $tmpSer );
-
-	 	## Here we have the number of fields checked, a serial
-		## should be present each time into the final record;
-		$i++;
-
-		@tmp = grep( /\S+/ , split( /\:/, $txtList->{$key} ));
-		for $tmpSer ( @tmp ) {
-			$ret->{$tmpSer}++;
-		}
-	}
-
-	## Now we delete the serials who don't appear in all searching
-	## Results
-	foreach $key ( keys %$ret ) {
-		delete $ret->{$key} if( $ret->{$key} < $i );
-		if( exists $ret->{$key} ) {
-			push ( @retList, $key );
-			## print "::: ADDED TO RETLIST $key => " .
-		## 				$ret->{KEY} . "<BR>\n";
-		}
-	}
-
-	return @retList if( $mode eq "ROWS" );
-	
-	for $i (@retList) {
-		my $obj;
-
-		next if ( $retNum < $from );
-		last if ( ( $maxItems ) and ( $retNum > $maxItems) );
-
-		## print ":::: (searchItemDB) ADDING => $i<BR>\n";
-		next if ( not $obj = $self->getItem( DATATYPE=>$dataType,
-							KEY=>$i ));
-
-	        ## Check for data consistent (VALID vs EXPIRED)
-	        if( ($dataType =~ /VALID_CERTIFICATE/i ) and
-                        ( $self->{tools}->cmpDate(
-                                DATE_1=>$self->{tools}->getDate(),
-                                DATE_2=>$obj->getParsed()->{NOTAFTER})>0) ) {
-                	$self->updateStatus( OBJECT=>$obj,
-                                        DATATYPE=>$dataType,
-                                        NEWTYPE=>"EXPIRED_CERTIFICATE");
-                	next;
-        	}
-        	if( ($dataType =~ /VALID_CRL/i ) and
-                        ( $self->{tools}->cmpDate(
-                                DATE_1=>$self->{tools}->getDate(),
-                                DATE_2=>$obj->getParsed()->{NEXT_UPDATE})>0)){
-
-                	$self->updateStatus( OBJECT=>$obj, 
-					DATATYPE=>$dataType,
-                                        NEWTYPE=>"EXPIRED_CRL");
-                	next;
-        	}
-
-		$obj->{DATATYPE} = $dataType;
-		## print ":::: (searchItemDB) ADDED => $obj<BR>\n";
-		push( @objRetList, $obj );
-
-		$retNum++;
-	}
-
-	## print ":::: (searchItemDB) RETNUM => $retNum ( $#retList )<BR>\n";
-	## print ":::: (searchItemDB) FROM => $from <BR>\n";
-	## print ":::: (searchItemDB) MAXITEMS => $maxItems <BR>\n";
-
-	return @objRetList;
 }
 
 sub listItems {
 	my $self = shift;
 	my $keys = { @_ };
 
-	my $dataType	= $keys->{DATATYPE};
-	my $elements 	= $self->elements( DATATYPE=>$dataType );
-	my $from 	= ( $keys->{FROM} or 0 );
-	my $maxItems	= $keys->{ITEMS};
-	my $mode	= $keys->{MODE};
+	my $dataType   = $keys->{DATATYPE};
+	my $from       = $keys->{FROM};
+	my $maxItems   = $keys->{ITEMS};
+	my $mode       = $keys->{MODE};
 
-	my ( @ret, $baseType, $retItems, $i, $item, $dbKey );
+	my ( @ret, $key, $val, $cursor, $cnt, $dbstat, $flags, $item );
 
-	return if( not $dataType );
+	return $self->setError (2167011, "OpenCA::DB->listItems: There is no datatype specified.")
+		if( not $dataType );
 
-	$baseType = $self->getBaseType( DATATYPE=>$dataType );
-	$dataType = "VALID_" . $dataType if( $dataType eq $baseType ); 
+	my ( $baseType, $status ) = $self->parseDataType( $dataType );
+	if ($dataType eq $baseType) {
+		$status = "VALID" if ( $baseType =~ /CERTIFICATE|CRL/ );
+		$status = "PENDING" if ( $baseType =~ /REQUEST|CRR/ );
+		$dataType = $status."_".$baseType; 
+	}
 
-	## if( (not $from) or 
-	## 	($self->getFirstItemKey(DATATYPE=>"$dataType")>$from)){
-	## 	    $dbKey = $self->getFirstItemKey(DATATYPE=>"$dataType");
-	##  } else {
-	## 	$dbKey = $self->getPrevItemKey(DATATYPE=>"$dataType",
-	## 					KEY=>"$from");
-	## }
+	return $self->setError (2167021, "OpenCA::DB->listItems: Cannot open database ($errno)\n$errval")
+		if (not $self->dbOpen( DATATYPE=>$dataType));
 
-	if( ($maxItems) and ($maxItems < $elements)) {
-		$retItems = $maxItems;
+	if( $from > 0 ) {
+		$flags = R_CURSOR; $key = $from;
 	} else {
-		$retItems = $elements;
+		$flags = R_FIRST; $key = ""; $val = "";
 	}
 
-	## print "::: (listItems) FROM  => $dbKey<BR>\n";
-	## print "::: (listItems) MAX ITEMS => $maxItems<BR>\n";
-	## print "::: (listItems) RET ITEMS => $retItems<BR>\n";
-	## print "::: (listItems) INIT KEY => $dbKey<BR>\n";
+	$cnt = 1;
+	for ( $dbstat = $self->{dbms}->seq($key, $val, $flags ) ;
+	      $dbstat == 0 ;
+	      $dbstat = $self->{dbms}->seq($key, $val, R_NEXT )) {
+		## Fetch results, different from the ELEMENTS key ...
+		next if ($key eq "ELEMENTS");
 
-	for ( $i = 0; $i <= $retItems; $i++ ) {
-		## print "::: (listItems) i => $i<BR>\n";
-		last if ( not $dbKey = 
-			$self->getNextItemKey(DATATYPE=>$dataType,
-							KEY=>$dbKey));
-
-		## print "::: (listItems) dbKey => $dbKey<BR>\n";
-		if( $mode eq "RAW" ) {
-			push ( @ret, $dbKey );
+		if ( $mode ne "RAW" ) {
+			## Create Object if mode != "RAW"
+			if( $item = $self->createObject(DATATYPE=>$dataType,
+								DATA=>$val) ) {
+				$item->getParsed()->{DBKEY} = $key;
+				push( @ret, $item );
+			}
 		} else {
-			$item = $self->getItem( DATATYPE=>$dataType,
-						  KEY=>$dbKey );
-
-			## Check for data consistent (VALID vs EXPIRED)
-			if( ($dataType =~ /VALID_CERTIFICATE/i ) and
-				( $self->{tools}->cmpDate( 
-					DATE_1=>$self->{tools}->getDate(),
-					DATE_2=>$item->getParsed()->{NOTAFTER})>0) ) {
-				$self->updateStatus( OBJECT=>$item,
-						DATATYPE=>$dataType,
-						NEWTYPE=>"EXPIRED_CERTIFICATE");
-				return;
-			}
-			if( ($dataType =~ /VALID_CRL/i ) and
-				( $self->{tools}->cmpDate( 
-					DATE_1=>$self->{tools}->getDate(),
-					DATE_2=>$item->getParsed()->{NEXT_UPDATE})>0)){
-
-				$self->updateStatus( OBJECT=>$item,
-						DATATYPE=>$dataType,
-						NEWTYPE=>"EXPIRED_CRL");
-					return;
-			}
-			push( @ret, $item ) if( $item );
+			push( @ret, $val );
 		}
-		## print "::: (listItems) ret => $#ret<BR>\n";
+
+		$cnt++;
+		last if ( $maxItems and $cnt > $maxItems );
 	}
 
-	return @ret;
+	return ( @ret );
 }
 
-
-sub isCertDataType {
+sub createObject {
 	my $self = shift;
 	my $keys = { @_ };
 
-	my $dataType = $keys->{DATATYPE};
+	my $dataType   = $keys->{DATATYPE};
+	my $rawData    = $keys->{DATA};
 
-	if ( $dataType =~ /^(VALID|REVOKED|EXPIRED)_CERTIFICATE/i ) {
-		return 1;
+	my ( $obj );
+	my ( $baseType, $status ) = $self->parseDataType( $dataType );
+
+	return $self->setError (2143011, "OpenCA::DB->createObject: Cannot determine basetype ($errno)\n$errval")
+		if( not $baseType );
+
+	if( $baseType =~ /CERTIFICATE/ ) {
+		$obj = new OpenCA::X509 ( SHELL=>$self->{backend},
+					  DATA=>$rawData,
+					  FORMAT=>$self->{defInFormat} );
+	} elsif ( $baseType =~ /CRL/ ) {
+		$obj = new OpenCA::CRL ( SHELL=>$self->{backend},
+					 DATA=>$rawData,
+					 FORMAT=>$self->{defInFormat} );
+	} elsif ( $baseType =~ /REQUEST|CRR/ ) {
+		$obj = new OpenCA::REQ ( SHELL=>$self->{backend},
+					 DATA=>$rawData );
+	} else {
+		## Unrecognized object
+		return $self->setError (2143021, "OpenCA::DB->createObject: Cannot determine the objecttype.");
 	}
 
-	return;
+	return $obj;
 }
-
 
 sub getSignature {
         my $self = shift;
-        my $txt  = shift;
+        my $obj  = shift;
 
-        my $ret;
-
-        my $beginSig    = $self->{beginSignature};
-        my $endSig      = $self->{endSignature};
-
-        ## Let's get text between the two headers, included
-        if( ($ret) = ( $txt =~ /($beginSig[\S\s\n]+$endSig)/m) ) {
-                return $ret
-        } else {
-                return;
-        }
-
-        return $ret;
+	return $obj->getParsed()->{SIGNATURE};
 }
 
 sub getBody {
         my $self = shift;
+        my $obj = shift;
 
-        my $ret = shift;
+	return $obj->getParsed()->{BODY};
+}
+
+sub getHeader {
+        my $self = shift;
+        my $obj = shift;
 
         my $beginHeader         = $self->{beginHeader};
         my $endHeader           = $self->{endHeader};
 
-        ## Let's throw away text between the two headers, included
-        $ret =~ s/($beginHeader[\S\s\n]+$endHeader\n)//;
+	my ( $ret, $pHead );
 
-        return $ret
+	$pHead = $obj->getParsed()->{HEADER};
+	return $self->setError (2173011, "OpenCA::DB->getHeader: The object has no header.")
+		if( not $pHead );
+
+	$ret = "$beginHeader\n";
+	foreach ( keys %$pHead ) {
+		$ret .= "$_=" . $pHead->{$_} . "\n";
+	}
+	$ret .= "$endHeader\n";
+
+        return $ret;
 }
 
+sub compareNumeric {
+	my ( $k1, $k2 ) = @_ ;
 
-sub toHex {
-	my $self 	= shift;
-	my $decimal 	= shift;
-	my $ret;
+	return $k1 <=> $k2;
+}
 
-	return "00" if ( not $decimal);
+sub compareString {
+	my ( $k1, $k2 ) = @_ ;
 
-	$ret = sprintf( "%lx", $decimal );
-
-	if( length( $ret ) % 2 ) {
-		$ret = "0" . $ret;
-	}
-
-	$ret = uc( $ret );
-	return $ret;
-
+        ## these are hashes
+        ## --> these are really big hexadecimal numbers
+        "\L$k1" <=> "\L$k2" ;
 }
 
 # Autoload methods go after =cut, and are processed by the autosplit program.
 
 1;
 __END__
-# Below is the stub of documentation for your module. You better edit it!
-
-=head1 NAME
-
-OpenCA::DB - Perl Certificates DB Extention.
-
-=head1 SYNOPSIS
-
-use OpenCA::DB;
-
-=head1 DESCRIPTION
-
-Sorry, no documentation available at the moment. Please take a look
-at the prova.pl program you find in main directory of the package.
-
-Here there is a list of the current available functions. Where there
-is (*) mark, the function is to be considered private and not public.
-
-	new {};
-		build a new DB object;
-
-	deleteData (*) {};
-		delete data on a DBM file;
-
-	saveData (*) {};
-		save data on a DBM file;
-
-	getData (*) {};
-		retrieve data from a DBM file;
-
-	getIndex {};
-		retrieve the IDX from a DBM file;
-
-	getHash (*) {};
-		get data and put it into hash format (used for header
-		extra info retrivial);
-
-	saveIndex {};
-		save the IDX to a DBM file;
-	
-	saveHash (*) {};
-		save an HASH to a DBM file (in a single key);
-
-	hash2txt (*) {};
-		convert an HASH to a txt (VAR=VAL);
-
-	txt2hash (*) {};
-		convert a TEXT to an HASH (VAR=VAL);
-
-	deleteRecord (*) {};
-		delete an entry from the DB (and corresponding search
-		dB);
-
-	addRecord (*) {};
-		add a record to a DB (and corresponding search dB);
-
-	updateRecord (*) {};
-		update a dB record;
-
-	initDB {};
-		initialize the dB structure and creates DBM files;
-
-	createDB (*) {};
-		create and initialize the DBM;
-
-	getReferences {};
-
-	getBaseType {};
-		get Base datatye given a generic one ( i.e. from PENDING_
-		REQUEST to REQUEST);
-
-	getSearchAttributes (*) {};
-		get a list of attributes for the search facility;
-
-	storeItem {};
-		store a given object (OpenCA::XXXX);
-
-	getItem {};
-		retrieve an object given the serial number;
-
-	getNextItem {};
-		get next object (or serial) given a serial;
-
-	getPrevItem {};
-		get previous object (or serial);
-
-	getNextItemKey {};
-		get Next Item dB Key;
-
-	getPrevItemKey {};
-		get previous Item dB Key;
-
-	deleteItem {};
-		delete an Item from the dB;
-
-	elements {};
-		returns number of elements of a given DATATYPE;
-
-	rows {};
-		return number of elements matching a serach;
-
-	searchItems {};
-		returns objects/serials matching the search on generic
-		datatypes (i.e. CERTIFICATE, REQUEST);
-
-	searchItemDB (*) {};
-		returns objects/serials matching the search on exact
-		datatypes (i.e. VALID_CERTIFICATE, PENDING_REQUEST);
-		
-	listItems {};
-		get a listing of a specified datatype (or part of them);
-
-	isCertDataType (*) {};
-		returns true if the given datatype is a certificate
-		related one;
-
-	getSignature (*) {};
-		get the signature (PKCS7) attached to an Item;
-
-	getBody (*) {};
-		get the body of an Item (without header or signature);
-
-	toHex (*) {};
-		convert a decimal to an hex;
-
-=head1 AUTHOR
-
-Massimiliano Pala <madwolf@openca.org>
-
-=head1 SEE ALSO
-
-OpenCA::OpenSSL, OpenCA::X509, OpenCA::CRL, OpenCA::REQ,
-OpenCA::TRIStateCGI, OpenCA::Configuration, OpenCA::Tools
-
-=cut

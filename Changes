@@ -1,5 +1,17 @@
 Revision history for Perl extension OpenCA::DB.
 
+2.05  Fixed seachItems with the SERIAL attribute. Currently if
+      a search is performed on the SERIAL and there is a match,
+      the item is returned nevertheless the other search attribs
+      matching or not.
+
+2.04  Few bugfixes. Delete Item was not working right with the
+      search attributes.
+
+2.02  New DB_File usage. Now it is mandatory to have BerkeleyDB
+      PERL module installed (as well as the DB itself!). Check
+      at http://www.sleepycat.com
+
 0.01  Sun Feb 13 18:02:52 2000
 	- original version; created by h2xs 1.19
 

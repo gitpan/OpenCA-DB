@@ -20,3 +20,6 @@ if( not $db or not $openssl ) {
 }
 
 $db->initDB( MODE => FORCE );
+print "DB Module Version : " . OpenCA::DB->VERSION . "\n\n";
+
+exit 0;

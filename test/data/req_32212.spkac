@@ -1,9 +1,16 @@
+-----BEGIN HEADER-----
+KEY = NONE
+TYPE = SPKAC
+APPROVED = OPERATOR ONE
+RA = Help Desk 1
+SERIAL = 32212
+-----END HEADER-----
 APPROVED = Wed Jan 26 13:59:31 CET 2000
 NOTBEFORE = Wed Jan 24 10:41:00 CET 2000
-OPERATOR = 01
+OPERATOR = 02
 PIN = pippopippo
 Email = madwolf@openca.org
-CN = Massimiliano Pala
+CN = Giovanna D'arco
 OU = OpenCA User
 O = OpenCA Organization
 C = IT

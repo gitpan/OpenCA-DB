@@ -6,7 +6,7 @@
 # Change 1..1 below to 1..last_test_to_print .
 # (It may become useful if the test is moved to ./t subdirectory.)
 
-BEGIN { $| = 1; print "0..6\n"; }
+BEGIN { $| = 1; print "0..8\n"; }
 END {print "not ok 1\n" unless $loaded;}
 
 use OpenCA::DB;
@@ -25,25 +25,36 @@ $ret = `./creat.pl 2>&1 >../logs/log.1`;
 if( $? != 0 ) { die "ERROR: not ok 1" };
 print "ok .. 1\n";
 
-$ret = `./alpha.pl 2>&1 >../logs/log.2`;
+$ret = `./store-certs.pl 2>&1 >../logs/log.2`;
 if( $? != 0 ) { die "ERROR: not ok 2" };
 print "ok .. 2\n";
 
-$ret = `./beta.pl 2>&1 >../logs/log.3`;
+$ret = `./list-certs.pl 2>&1 >../logs/log.3`;
 if( $? != 0 ) { die "ERROR: not ok 3" };
 print "ok .. 3\n";
 
-$ret = `./gamma.pl 2>&1 >../logs/log.4`;
+$ret = `./search-certs.pl 2>&1 >../logs/log.4`;
 if( $? != 0 ) { die "ERROR: not ok 4" };
 print "ok .. 4\n";
 
-$ret = `./delta.pl 2>&1 >../logs/log.5`;
+$ret = `./store-reqs.pl 2>&1 >../logs/log.5`;
 if( $? != 0 ) { die "ERROR: not ok 5" };
 print "ok .. 5\n";
 
-$ret = `./epsilon.pl 2>&1 >../logs/log.6`;
+$ret = `./list-reqs.pl 2>&1 >../logs/log.6`;
 if( $? != 0 ) { die "ERROR: not ok 6" };
 print "ok .. 6\n";
 
+$ret = `./delete-reqs.pl 2>&1 >../logs/log.7`;
+if( $? != 0 ) { die "ERROR: not ok 7" };
+print "ok .. 7\n";
+
+$ret = `./delete-certs.pl 2>&1 >../logs/log.8`;
+if( $? != 0 ) { die "ERROR: not ok 8" };
+print "ok .. 8\n";
+
 print "\nAll tests ok.\n\n";
+print "(removing db files)\n\n";
+`rm -rf db/*_*`;
+
 exit 0;
