@@ -6,11 +6,12 @@
 # Change 1..1 below to 1..last_test_to_print .
 # (It may become useful if the test is moved to ./t subdirectory.)
 
-BEGIN { $| = 1; print "1..1\n"; }
+BEGIN { $| = 1; print "0..6\n"; }
 END {print "not ok 1\n" unless $loaded;}
+
 use OpenCA::DB;
 $loaded = 1;
-print "ok 1\n";
+print "ok .. 0\n";
 
 ######################### End of black magic.
 
@@ -18,16 +19,30 @@ print "ok 1\n";
 # (correspondingly "not ok 13") depending on the success of chunk 13
 # of the test code):
 
-use OpenCA::OpenSSL;
+chdir "test/" or die "ERROR: cannot change dir to test/";
 
-my $openssl = new OpenCA::OpenSSL;
-$openssl->setParams( CONFIG=>"/usr/local/mpcNET/stuff/openssl.cnf");
+$ret = `./creat.pl 2>&1 >log.1`;
+if( $? != 0 ) { die "ERROR: not ok 1" };
+print "ok .. 1\n";
 
-my $db = new OpenCA::DB( SHELL=>openssl, DB_DIR=>"db" );
+$ret = `./alpha.pl 2>&1 >log.2`;
+if( $? != 0 ) { die "ERROR: not ok 2" };
+print "ok .. 2\n";
 
-if( not $db ) {
-	print "not ok 1\n";
-	exit 1;
-}
+$ret = `./beta.pl 2>&1 >log.3`;
+if( $? != 0 ) { die "ERROR: not ok 3" };
+print "ok .. 3\n";
+
+$ret = `./gamma.pl 2>&1 >log.4`;
+if( $? != 0 ) { die "ERROR: not ok 4" };
+print "ok .. 4\n";
+
+$ret = `./delta.pl 2>&1 >log.5`;
+if( $? != 0 ) { die "ERROR: not ok 5" };
+print "ok .. 5\n";
+
+$ret = `./epsilon.pl 2>&1 >log.6`;
+if( $? != 0 ) { die "ERROR: not ok 6" };
+print "ok .. 6\n";
 
 exit 0;
